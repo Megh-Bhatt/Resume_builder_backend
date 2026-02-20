@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Resume Generator - Architecture</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 40px 20px;
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            text-align: center;
+            color: white;
+            margin-bottom: 40px;
+            font-size: 2.5rem;
+        }
+        
+        .diagram {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        
+        .layer {
+            margin-bottom: 30px;
+        }
+        
+        .layer-title {
+            font-size: 1.2rem;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: #333;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .components {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+        }
+        
+        .component {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        .component h3 {
+            margin-bottom: 8px;
+            font-size: 1.1rem;
+        }
+        
+        .component p {
+            font-size: 0.9rem;
+            opacity: 0.9;
+            line-height: 1.4;
+        }
+        
+        .workflow {
+            background: #f8f9fa;
+            padding: 30px;
+            border-radius: 12px;
+            margin-top: 30px;
+        }
+        
+        .workflow-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: #333;
+        }
+        
+        .step {
+            display: flex;
+            align-items: flex-start;
+            margin-bottom: 20px;
+            gap: 15px;
+        }
+        
+        .step-number {
+            min-width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+        }
+        
+        .step-content {
+            flex: 1;
+        }
+        
+        .step-content h4 {
+            margin-bottom: 5px;
+            color: #333;
+        }
+        
+        .step-content p {
+            color: #666;
+            font-size: 0.9rem;
+        }
+        
+        .arrow {
+            text-align: center;
+            color: #667eea;
+            font-size: 1.5rem;
+            margin: -10px 0;
+        }
+        
+        .badge {
+            display: inline-block;
+            background: rgba(255,255,255,0.2);
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            margin-top: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🤖 AI Resume Generator - System Architecture</h1>
+        
+        <div class="diagram">
+            <!-- Frontend Layer -->
+            <div class="layer">
+                <div class="layer-title">
+                    🎨 Frontend Layer
+                </div>
+                <div class="components">
+                    <div class="component">
+                        <h3>React UI</h3>
+                        <p>Beautiful, responsive interface for resume upload and job description input</p>
+                        <span class="badge">Vite + Tailwind CSS</span>
+                    </div>
+                    <div class="component">
+                        <h3>File Upload</h3>
+                        <p>Drag-and-drop PDF resume upload with validation</p>
+                        <span class="badge">PDF Support</span>
+                    </div>
+                    <div class="component">
+                        <h3>Preview & Download</h3>
+                        <p>In-browser PDF preview and download functionality</p>
+                        <span class="badge">Base64 Encoding</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Backend Layer -->
+            <div class="layer">
+                <div class="layer-title">
+                    ⚙️ Backend Layer
+                </div>
+                <div class="components">
+                    <div class="component">
+                        <h3>FastAPI Server</h3>
+                        <p>RESTful API endpoints for resume generation and PDF compilation</p>
+                        <span class="badge">Python 3.11+</span>
+                    </div>
+                    <div class="component">
+                        <h3>PDF Parser</h3>
+                        <p>Extracts text from uploaded PDF resumes using pdfplumber</p>
+                        <span class="badge">pdfplumber</span>
+                    </div>
+                    <div class="component">
+                        <h3>LaTeX Compiler</h3>
+                        <p>Compiles LaTeX code to professional PDF documents</p>
+                        <span class="badge">pdflatex</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- AI Layer -->
+            <div class="layer">
+                <div class="layer-title">
+                    🧠 AI/Agent Layer (LangGraph)
+                </div>
+                <div class="components">
+                    <div class="component">
+                        <h3>Info Extractor</h3>
+                        <p>Extracts name, contact, experience, education from resume</p>
+                        <span class="badge">Claude Sonnet 4</span>
+                    </div>
+                    <div class="component">
+                        <h3>Project Generator</h3>
+                        <p>Creates 3-4 relevant projects tailored to job description</p>
+                        <span class="badge">AI-Powered</span>
+                    </div>
+                    <div class="component">
+                        <h3>Skills Generator</h3>
+                        <p>Generates categorized technical skills aligned with job requirements</p>
+                        <span class="badge">Categorized Output</span>
+                    </div>
+                    <div class="component">
+                        <h3>Metadata Creator</h3>
+                        <p>Structures all data using Pydantic models and tool calls</p>
+                        <span class="badge">Type-Safe</span>
+                    </div>
+                    <div class="component">
+                        <h3>LaTeX Generator</h3>
+                        <p>Replaces template placeholders with actual user data</p>
+                        <span class="badge">Template-Based</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Workflow -->
+            <div class="workflow">
+                <div class="workflow-title">📋 Workflow Execution</div>
+                
+                <div class="step">
+                    <div class="step-number">1</div>
+                    <div class="step-content">
+                        <h4>User Input</h4>
+                        <p>User uploads existing resume (PDF) and pastes job description</p>
+                    </div>
+                </div>
+                
+                <div class="arrow">↓</div>
+                
+                <div class="step">
+                    <div class="step-number">2</div>
+                    <div class="step-content">
+                        <h4>PDF Parsing</h4>
+                        <p>Backend extracts text content from PDF using pdfplumber</p>
+                    </div>
+                </div>
+                
+                <div class="arrow">↓</div>
+                
+                <div class="step">
+                    <div class="step-number">3</div>
+                    <div class="step-content">
+                        <h4>LangGraph Workflow Starts</h4>
+                        <p>Agentic workflow orchestrates multiple AI operations</p>
+                    </div>
+                </div>
+                
+                <div class="arrow">↓</div>
+                
+                <div class="step">
+                    <div class="step-number">4</div>
+                    <div class="step-content">
+                        <h4>Extract Information</h4>
+                        <p>Claude extracts: name, email, phone, GitHub, LinkedIn, experiences, education, PORs, certifications</p>
+                    </div>
+                </div>
+                
+                <div class="arrow">↓</div>
+                
+                <div class="step">
+                    <div class="step-number">5</div>
+                    <div class="step-content">
+                        <h4>Generate Projects</h4>
+                        <p>AI creates 3-4 relevant projects with technologies and achievements based on job description</p>
+                    </div>
+                </div>
+                
+                <div class="arrow">↓</div>
+                
+                <div class="step">
+                    <div class="step-number">6</div>
+                    <div class="step-content">
+                        <h4>Generate Skills</h4>
+                        <p>AI generates categorized technical skills (languages, frameworks, tools) aligned with job</p>
+                    </div>
+                </div>
+                
+                <div class="arrow">↓</div>
+                
+                <div class="step">
+                    <div class="step-number">7</div>
+                    <div class="step-content">
+                        <h4>Create Metadata (Tool Call)</h4>
+                        <p>Structured resume metadata created using create_resume_metadata tool</p>
+                    </div>
+                </div>
+                
+                <div class="arrow">↓</div>
+                
+                <div class="step">
+                    <div class="step-number">8</div>
+                    <div class="step-content">
+                        <h4>Generate LaTeX</h4>
+                        <p>Template placeholders replaced with actual user data to create complete LaTeX code</p>
+                    </div>
+                </div>
+                
+                <div class="arrow">↓</div>
+                
+                <div class="step">
+                    <div class="step-number">9</div>
+                    <div class="step-content">
+                        <h4>Compile to PDF</h4>
+                        <p>LaTeX code compiled to professional PDF using pdflatex</p>
+                    </div>
+                </div>
+                
+                <div class="arrow">↓</div>
+                
+                <div class="step">
+                    <div class="step-number">10</div>
+                    <div class="step-content">
+                        <h4>Return to User</h4>
+                        <p>User can preview PDF in browser or download it directly</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
