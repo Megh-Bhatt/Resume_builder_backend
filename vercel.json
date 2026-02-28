@@ -3,22 +3,15 @@
   "builds": [
     {
       "src": "main.py",
-      "use": "@vercel/python"
+      "use": "@vercel/python",
+      "config": {
+        "memory": 1024,
+        "maxDuration": 60
+      }
     }
   ],
-  "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "main.py"
-    }
-  ],
+  "routes": [{ "src": "/(.*)", "dest": "main.py" }],
   "env": {
     "PYTHON_VERSION": "3.11"
-  },
-  "functions": {
-    "main.py": {
-      "memory": 1024,
-      "maxDuration": 60
-    }
   }
 }

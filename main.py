@@ -5,14 +5,18 @@ Compiles LaTeX using online API (no local dependencies)
 Structured responses via LangGraph's with_structured_output (tool-call based)
 """
 
-from fastapi import FastAPI, UploadFile, File, Form
+from fastapi import FastAPI, UploadFile, File, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 from typing import List, Optional, TypedDict, Annotated
 from langgraph.graph import StateGraph, END
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 import pdfplumber
 import os
 from pathlib import Path
@@ -25,27 +29,76 @@ from latex_handler import generate_latex
 from online_compiler import compile_latex_online
 from fastapi.responses import StreamingResponse
 import logging
+from langchain_anthropic import ChatAnthropic
+from langchain_google_genai import ChatGoogleGenerativeAI
 
 load_dotenv()
 
+# ──────────────────────────────────────────────
+# Rate Limiter Setup
+# ──────────────────────────────────────────────
+
+limiter = Limiter(key_func=get_remote_address, default_limits=["100/hour"])
+
 app = FastAPI(title="AI Resume Generator")
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# ──────────────────────────────────────────────
+# Security Headers Middleware
+# ──────────────────────────────────────────────
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        return response
+
+app.add_middleware(SecurityHeadersMiddleware)
+
+# ──────────────────────────────────────────────
+# CORS — locked to your frontend domain
+# ──────────────────────────────────────────────
+
+ALLOWED_ORIGINS = os.getenv("FRONTEND_URL", "http://localhost:3000").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,   # set FRONTEND_URL in Vercel env vars
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST"],   # only what you actually use
     allow_headers=["*"],
 )
 
-llm = ChatBedrockConverse(
-    model="us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-    region_name="us-east-1",
-)
+# ──────────────────────────────────────────────
+# File size / input guards
+# ──────────────────────────────────────────────
 
+MAX_PDF_SIZE  = 5 * 1024 * 1024   # 5 MB
+MAX_JD_LENGTH = 10_000             # characters
+MAX_LATEX_SIZE = 50_000            # bytes
+
+# ──────────────────────────────────────────────
+# LLM Setup
+# ──────────────────────────────────────────────
+
+# llm = ChatBedrockConverse(
+#     model="us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+#     region_name="us-east-1",
+# )
+# llm = ChatAnthropic(
+#     model="claude-sonnet-4-5",  # or claude-3-5-haiku, claude-opus-4, etc.
+# )
+llm = ChatGoogleGenerativeAI(
+    model="gemini-3-flash-preview"  # ✅ Current recommended model
+)
 # ──────────────────────────────────────────────
 # Pydantic schemas for structured output
 # ──────────────────────────────────────────────
@@ -118,12 +171,11 @@ class TechnicalSkills(BaseModel):
 
 # ──────────────────────────────────────────────
 # Structured-output LLM bindings
-# (each uses a tool call under the hood)
 # ──────────────────────────────────────────────
 
-extractor_llm   = llm.with_structured_output(ExtractedResumeInfo)
-project_llm     = llm.with_structured_output(GeneratedProjects)
-skills_llm      = llm.with_structured_output(TechnicalSkills)
+extractor_llm = llm.with_structured_output(ExtractedResumeInfo)
+project_llm   = llm.with_structured_output(GeneratedProjects)
+skills_llm    = llm.with_structured_output(TechnicalSkills)
 
 
 # ──────────────────────────────────────────────
@@ -131,8 +183,6 @@ skills_llm      = llm.with_structured_output(TechnicalSkills)
 # ──────────────────────────────────────────────
 
 def extract_resume_info(state: AgentState) -> AgentState:
-    """Extract user information from existing resume using structured output."""
-
     messages = [
         SystemMessage(content=(
             "You are an expert at extracting structured information from resumes. "
@@ -142,10 +192,7 @@ def extract_resume_info(state: AgentState) -> AgentState:
         )),
         HumanMessage(content=f"Resume text:\n\n{state['resume_text']}")
     ]
-
-    # with_structured_output uses a tool call → returns a validated Pydantic object
     extracted: ExtractedResumeInfo = extractor_llm.invoke(messages)
-
     return {
         **state,
         "extracted_info": extracted.model_dump(),
@@ -158,30 +205,25 @@ def extract_resume_info(state: AgentState) -> AgentState:
 # ──────────────────────────────────────────────
 
 def generate_projects(state: AgentState) -> AgentState:
-    """Generate 3 relevant projects tailored to the job description."""
-
     experience_summary = json.dumps(
         state["extracted_info"].get("experiences", []), indent=2
     )
-
     messages = [
         SystemMessage(content=(
             "You are an expert at creating compelling project descriptions for resumes. "
-            "Generate exactly 3 technical projects(the title should be under 25 characters) that align with the job description and "
+            "Generate exactly 5 technical projects(the title should be under 25 characters) that align with the job description and "
             "the candidate's existing experience level. "
-            "Each project must have 2-3 achievement bullet points with specific metrics and numbers. "
+            "Each project must have atleast 3 achievement bullet points with specific metrics and numbers. "
             "Keep the technologies list to at most 3 items per project. "
             "Make the projects realistic and impressive."
         )),
         HumanMessage(content=(
             f"Job Description:\n{state['job_description']}\n\n"
             f"Candidate's existing experience:\n{experience_summary}\n\n"
-            "Generate 3 relevant projects."
+            "Generate 5 relevant projects."
         ))
     ]
-
     result: GeneratedProjects = project_llm.invoke(messages)
-
     return {
         **state,
         "generated_projects": [p.model_dump() for p in result.projects],
@@ -194,8 +236,6 @@ def generate_projects(state: AgentState) -> AgentState:
 # ──────────────────────────────────────────────
 
 def generate_skills(state: AgentState) -> AgentState:
-    """Generate relevant technical skills based on the job description."""
-
     messages = [
         SystemMessage(content=(
             "You are an expert at identifying key technical skills for job applications. "
@@ -206,9 +246,7 @@ def generate_skills(state: AgentState) -> AgentState:
         )),
         HumanMessage(content=f"Job Description:\n{state['job_description']}")
     ]
-
     result: TechnicalSkills = skills_llm.invoke(messages)
-
     return {
         **state,
         "generated_skills": result.skills,
@@ -221,11 +259,8 @@ def generate_skills(state: AgentState) -> AgentState:
 # ──────────────────────────────────────────────
 
 def create_metadata(state: AgentState) -> AgentState:
-    """Assemble structured resume metadata from all previous nodes."""
-
     extracted = state["extracted_info"]
 
-    # --- Experiences (already validated by Pydantic in Node 1) ---
     formatted_experiences = [
         {
             "company":      exp.get("company", ""),
@@ -236,7 +271,6 @@ def create_metadata(state: AgentState) -> AgentState:
         for exp in extracted.get("experiences", [])
     ]
 
-    # --- Positions of responsibility ---
     formatted_por = [
         {
             "organization": por.get("organization", ""),
@@ -248,7 +282,6 @@ def create_metadata(state: AgentState) -> AgentState:
         for por in extracted.get("positions_of_responsibility", [])
     ]
 
-    # --- Certifications (already dicts from Pydantic model) ---
     formatted_certifications = [
         {
             "name":   cert.get("name", ""),
@@ -258,7 +291,6 @@ def create_metadata(state: AgentState) -> AgentState:
         for cert in extracted.get("certifications", [])
     ]
 
-    # --- Projects: prefer AI-generated ones over extracted ---
     raw_projects = (
         state["generated_projects"]
         if state.get("generated_projects")
@@ -274,7 +306,6 @@ def create_metadata(state: AgentState) -> AgentState:
         for proj in raw_projects
     ]
 
-    # --- Coding stats: convert list-of-dicts → single dict if needed ---
     raw_coding = extracted.get("coding_stats")
     if isinstance(raw_coding, list):
         coding_stats = {item["platform"]: item["description"] for item in raw_coding if isinstance(item, dict)}
@@ -312,22 +343,18 @@ def create_metadata(state: AgentState) -> AgentState:
 
 def build_graph():
     workflow = StateGraph(AgentState)
-
     workflow.add_node("extract_info",      extract_resume_info)
     workflow.add_node("generate_projects", generate_projects)
     workflow.add_node("generate_skills",   generate_skills)
     workflow.add_node("create_metadata",   create_metadata)
     workflow.add_node("generate_latex",    generate_latex)
-
     workflow.set_entry_point("extract_info")
     workflow.add_edge("extract_info",      "generate_projects")
     workflow.add_edge("generate_projects", "generate_skills")
     workflow.add_edge("generate_skills",   "create_metadata")
     workflow.add_edge("create_metadata",   "generate_latex")
     workflow.add_edge("generate_latex",    END)
-
     return workflow.compile()
-
 
 graph = build_graph()
 
@@ -337,25 +364,42 @@ graph = build_graph()
 # ──────────────────────────────────────────────
 
 @app.post("/api/generate-resume")
+@limiter.limit("5/minute")                  # max 5 resume generations per minute per IP
 async def generate_resume(
+    request: Request,                        # required for slowapi
     resume_file: UploadFile = File(...),
     job_description: str = Form(...)
 ):
     """Generate a tailored resume from an existing resume PDF + job description."""
     try:
+        # --- Input validation ---
+        content = await resume_file.read()
+        if len(content) > MAX_PDF_SIZE:
+            return JSONResponse({"success": False, "error": "PDF too large (max 5MB)"}, status_code=400)
+
+        if not resume_file.filename.lower().endswith(".pdf"):
+            return JSONResponse({"success": False, "error": "Only PDF files are accepted"}, status_code=400)
+
+        if len(job_description) > MAX_JD_LENGTH:
+            return JSONResponse({"success": False, "error": "Job description too long (max 10,000 chars)"}, status_code=400)
+
         resume_text = ""
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
-            content = await resume_file.read()
             tmp_file.write(content)
             tmp_filename = tmp_file.name
 
         try:
             with pdfplumber.open(tmp_filename) as pdf:
                 for page in pdf.pages:
-                    resume_text += page.extract_text() + "\n"
+                    text = page.extract_text()
+                    if text:
+                        resume_text += text + "\n"
         finally:
             if os.path.exists(tmp_filename):
                 os.unlink(tmp_filename)
+
+        if not resume_text.strip():
+            return JSONResponse({"success": False, "error": "Could not extract text from PDF"}, status_code=400)
 
         initial_state = {
             "resume_text":        resume_text,
@@ -375,8 +419,8 @@ async def generate_resume(
         logger.info(f"Projects    : {len(final_state['resume_metadata'].projects)}")
 
         return JSONResponse({
-            "success":   True,
-            "metadata":  final_state["resume_metadata"].model_dump() if final_state["resume_metadata"] else None,
+            "success":    True,
+            "metadata":   final_state["resume_metadata"].model_dump() if final_state["resume_metadata"] else None,
             "latex_code": final_state["latex_code"],
             "debug": {
                 "extracted_experiences_count": len(final_state["extracted_info"].get("experiences", [])),
@@ -388,18 +432,36 @@ async def generate_resume(
 
     except Exception as e:
         logger.exception("Error in generate_resume")
-        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+        # Never expose raw error details in production
+        is_dev = os.getenv("ENV") == "development"
+        return JSONResponse(
+            {"success": False, "error": str(e) if is_dev else "Internal server error"},
+            status_code=500
+        )
+
 
 @app.post("/api/generate-resume-stream")
+@limiter.limit("5/minute")                  # same strict limit for the streaming endpoint
 async def generate_resume_stream_route(
+    request: Request,
     resume_file: UploadFile = File(...),
     job_description: str = Form(...)
 ):
     """Stream resume generation progress via Server-Sent Events."""
 
+    # --- Input validation ---
+    content = await resume_file.read()
+    if len(content) > MAX_PDF_SIZE:
+        return JSONResponse({"success": False, "error": "PDF too large (max 5MB)"}, status_code=400)
+
+    if not resume_file.filename.lower().endswith(".pdf"):
+        return JSONResponse({"success": False, "error": "Only PDF files are accepted"}, status_code=400)
+
+    if len(job_description) > MAX_JD_LENGTH:
+        return JSONResponse({"success": False, "error": "Job description too long (max 10,000 chars)"}, status_code=400)
+
     resume_text = ""
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-        content = await resume_file.read()
         tmp.write(content)
         tmp_path = tmp.name
 
@@ -413,6 +475,9 @@ async def generate_resume_stream_route(
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
 
+    if not resume_text.strip():
+        return JSONResponse({"success": False, "error": "Could not extract text from PDF"}, status_code=400)
+
     initial_state = {
         "resume_text":        resume_text,
         "job_description":    job_description,
@@ -425,11 +490,11 @@ async def generate_resume_stream_route(
     }
 
     NODE_LABELS = {
-        "extract_info":       "Reading your resume",
-        "generate_projects":  "Crafting tailored projects",
-        "generate_skills":    "Matching technical skills",
-        "create_metadata":    "Building resume structure",
-        "generate_latex":     "Rendering LaTeX document",
+        "extract_info":      "Reading your resume",
+        "generate_projects": "Crafting tailored projects",
+        "generate_skills":   "Matching technical skills",
+        "create_metadata":   "Building resume structure",
+        "generate_latex":    "Rendering LaTeX document",
     }
 
     async def event_generator():
@@ -443,14 +508,15 @@ async def generate_resume_stream_route(
                     payload = json.dumps({"node": node_name, "label": NODE_LABELS.get(node_name, node_name)})
                     yield f"event: node_complete\ndata: {payload}\n\n"
 
-            metadata_obj = accumulated_state.get("resume_metadata")
+            metadata_obj  = accumulated_state.get("resume_metadata")
             metadata_dict = metadata_obj.model_dump() if hasattr(metadata_obj, "model_dump") else metadata_obj
 
             yield f"event: complete\ndata: {json.dumps({'metadata': metadata_dict, 'latex_code': accumulated_state.get('latex_code')})}\n\n"
 
         except Exception as exc:
             import traceback
-            yield f"event: error\ndata: {json.dumps({'error': str(exc), 'traceback': traceback.format_exc() if os.getenv('ENV') == 'development' else None})}\n\n"
+            is_dev = os.getenv("ENV") == "development"
+            yield f"event: error\ndata: {json.dumps({'error': str(exc), 'traceback': traceback.format_exc() if is_dev else None})}\n\n"
 
     return StreamingResponse(
         event_generator(),
@@ -462,25 +528,39 @@ async def generate_resume_stream_route(
         },
     )
 
+
 @app.post("/api/regenerate-latex")
-async def regenerate_latex(metadata: ResumeMetadata):
-    """Regenerate LaTeX from updated (edited) metadata - used when user deletes sections"""
+@limiter.limit("10/minute")
+async def regenerate_latex(request: Request, metadata: ResumeMetadata):
+    """Regenerate LaTeX from updated (edited) metadata."""
     try:
         state = {"resume_metadata": metadata}
         updated_state = generate_latex(state)
-        
         return JSONResponse({
-            "success": True,
+            "success":    True,
             "latex_code": updated_state["latex_code"]
         })
     except Exception as e:
         logger.exception("Error regenerating LaTeX")
-        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
-    
+        is_dev = os.getenv("ENV") == "development"
+        return JSONResponse(
+            {"success": False, "error": str(e) if is_dev else "Internal server error"},
+            status_code=500
+        )
+
+
 @app.post("/api/compile-latex")
-async def compile_latex(latex_code: str = Form(...)):
+@limiter.limit("5/minute")
+async def compile_latex(request: Request, latex_code: str = Form(...)):
     """Compile LaTeX to PDF via online API (Vercel-compatible)."""
     try:
+        # Guard against huge/malicious payloads
+        if len(latex_code.encode("utf-8")) > MAX_LATEX_SIZE:
+            return JSONResponse(
+                {"success": False, "error": "LaTeX code exceeds maximum allowed size (50KB)"},
+                status_code=400
+            )
+
         logger.info("Starting online LaTeX compilation...")
         success, pdf_bytes, error = compile_latex_online(latex_code, timeout=45)
 
@@ -500,11 +580,16 @@ async def compile_latex(latex_code: str = Form(...)):
 
     except Exception as e:
         logger.exception("Unexpected error in compile_latex")
-        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+        is_dev = os.getenv("ENV") == "development"
+        return JSONResponse(
+            {"success": False, "error": str(e) if is_dev else "Internal server error"},
+            status_code=500
+        )
 
 
 @app.get("/health")
-async def health_check():
+@limiter.limit("30/minute")
+async def health_check(request: Request):
     return {"status": "healthy", "compiler": "online", "vercel_compatible": True}
 
 
