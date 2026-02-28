@@ -31,7 +31,6 @@ from fastapi.responses import StreamingResponse
 import logging
 # from langchain_anthropic import ChatAnthropic
 from langchain_google_genai import ChatGoogleGenerativeAI
-from mangum import Mangum
 
 load_dotenv()
 
