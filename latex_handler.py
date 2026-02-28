@@ -1,6 +1,8 @@
 """
 LaTeX Handler - Generates LaTeX code (no local compilation needed)
+Now supports conditional sections - empty sections are completely removed
 """
+
 from agentstate import AgentState
 from langchain_core.messages import HumanMessage
 
@@ -33,7 +35,7 @@ def escape_latex(text):
 
 
 def generate_latex(state: AgentState) -> AgentState:
-    """Generate LaTeX resume code from metadata"""
+    """Generate LaTeX resume code from metadata - empty sections are omitted"""
     
     metadata = state['resume_metadata']
     latex_template = get_latex_template()
@@ -45,57 +47,89 @@ def generate_latex(state: AgentState) -> AgentState:
     latex_code = latex_code.replace("{{PHONE}}", escape_latex(metadata.phone or "+91 1234567890"))
     latex_code = latex_code.replace("{{LINKEDIN}}", escape_latex(metadata.linkedin or "linkedin.com/in/yourprofile"))
     
-    # ==================== EXPERIENCE ====================
-    experience_latex = ""
+    # ==================== EXPERIENCE SECTION (conditional) ====================
+    experience_section = ""
     if metadata.experiences and len(metadata.experiences) > 0:
+        items = ""
         for exp in metadata.experiences:
-            company = escape_latex(exp.get('company', 'Company'))
-            duration = escape_latex(exp.get('duration', 'Date'))
-            role = escape_latex(exp.get('role', 'Role'))
+            company = escape_latex(exp.get('company', ''))
+            duration = escape_latex(exp.get('duration', ''))
+            role = escape_latex(exp.get('role', ''))
             
-            experience_latex += f"    \\resumeSubheading{{{company}}}{{{duration}}}{{{role}}}{{}}\\resumeItemListStart\n"
-            
+            items += f"    \\resumeSubheading{{{company}}}{{{duration}}}{{{role}}}{{}}\\resumeItemListStart\n"
             for achievement in exp.get('achievements', []):
-                experience_latex += f"        \\resumeItem{{{escape_latex(achievement)}}}\n"
-            
-            experience_latex += "    \\resumeItemListEnd\n\n"
-    else:
-        experience_latex = "    \\resumeSubheading{Add Your Experience Here}{Jan 2024 - Present}{Role}{}\\resumeItemListStart\n        \\resumeItem{Description of your work experience}\n    \\resumeItemListEnd\n\n"
-    
-    latex_code = latex_code.replace("{{EXPERIENCE}}", experience_latex)
+                items += f"        \\resumeItem{{{escape_latex(achievement)}}}\n"
+            items += "    \\resumeItemListEnd\n\n"
+        
+        experience_section = f"""\\section{{Experience}}
+  \\resumeSubHeadingListStart
+{items}  \\resumeSubHeadingListEnd
+\\vspace{{-16pt}}
+"""
+    latex_code = latex_code.replace("{{EXPERIENCE_SECTION}}", experience_section)
 
-    # ==================== EDUCATION ====================
-    education_latex = ""
+    # ==================== EDUCATION SECTION (conditional) ====================
+    education_section = ""
     if metadata.education and len(metadata.education) > 0:
+        items = ""
         for edu in metadata.education:
-            institution = escape_latex(edu.get('institution', 'Institution'))
-            duration = escape_latex(edu.get('duration', 'Date'))
-            degree = escape_latex(edu.get('degree', 'Degree'))
+            institution = escape_latex(edu.get('institution', ''))
+            duration = escape_latex(edu.get('duration', ''))
+            degree = escape_latex(edu.get('degree', ''))
             
-            education_latex += f"    \\resumeSubheading{{{institution}}}{{{duration}}}{{{degree}}}{{}}\\vspace{{-7pt}}\n"
-    else:
-        education_latex = "    \\resumeSubheading{Your University}{2020 - 2024}{Your Degree}{}\\vspace{-7pt}\n"
-    
-    latex_code = latex_code.replace("{{EDUCATION}}", education_latex)
+            items += f"    \\resumeSubheading{{{institution}}}{{{duration}}}{{{degree}}}{{}}\\vspace{{-7pt}}\n"
+        
+        education_section = f"""\\section{{Education}}
+  \\resumeSubHeadingListStart
+{items}  \\resumeSubHeadingListEnd
+"""
+    latex_code = latex_code.replace("{{EDUCATION_SECTION}}", education_section)
 
-    # ==================== PROJECTS ====================
-    projects_latex = ""
+    # ==================== PROJECTS SECTION (conditional) ====================
+    projects_section = ""
     if metadata.projects and len(metadata.projects) > 0:
+        items = ""
         for proj in metadata.projects:
-            project_name = escape_latex(proj.get('name', 'Project'))
+            project_name = escape_latex(proj.get('name', ''))
             tech_stack = ", ".join([escape_latex(str(t)) for t in proj.get('technologies', [])])
-            date = escape_latex(proj.get('date', 'Date'))
+            date = escape_latex(proj.get('date', ''))
             
-            projects_latex += f"    \\resumeProjectHeading{{\\textbf{{{project_name}}} $|$ {tech_stack}}}{{{date}}}\\resumeItemListStart\n"
-            
+            items += f"    \\resumeProjectHeading{{\\textbf{{{project_name}}} $|$ {tech_stack}}}{{{date}}}\\resumeItemListStart\n"
             for achievement in proj.get('achievements', []):
-                projects_latex += f"      \\resumeItem{{{escape_latex(achievement)}}}\n"
-            
-            projects_latex += "    \\resumeItemListEnd\n"
-    
-    latex_code = latex_code.replace("{{PROJECTS}}", projects_latex)
+                items += f"      \\resumeItem{{{escape_latex(achievement)}}}\n"
+            items += "    \\resumeItemListEnd\n"
+            items += "\\vspace{-18pt} \n"
 
-    # ==================== TECHNICAL SKILLS ====================
+    
+        projects_section = f"""\\section{{Projects}}
+    \\resumeSubHeadingListStart
+{items}    \\resumeSubHeadingListEnd
+\\vspace{{5pt}}
+"""
+    latex_code = latex_code.replace("{{PROJECTS_SECTION}}", projects_section)
+
+    # ==================== POSITIONS OF RESPONSIBILITY (conditional) ====================
+    positions_section = ""
+    if metadata.positions_of_responsibility and len(metadata.positions_of_responsibility) > 0:
+        items = ""
+        for por in metadata.positions_of_responsibility:
+            organization = escape_latex(por.get('organization', ''))
+            duration = escape_latex(por.get('duration', ''))
+            role = escape_latex(por.get('role', ''))
+            location = escape_latex(por.get('location', ''))
+            description = escape_latex(por.get('description', ''))
+            
+            items += f"        \\resumeSubheading{{{organization}}}{{{duration}}}{{{role}}}{{{location}}}\\resumeItemListStart\n"
+            items += f"            \\resumeItem{{{description}}}\n"
+            items += "        \\resumeItemListEnd\n\n"
+        
+        positions_section = f"""\\section{{Position of Responsibility}}
+    \\resumeSubHeadingListStart
+{items}    \\resumeSubHeadingListEnd
+"""
+    latex_code = latex_code.replace("{{POSITIONS_SECTION}}", positions_section)
+
+    # ==================== TECHNICAL SKILLS (always shown) ====================
     technical_skills_latex = ""
     if hasattr(metadata, 'technical_skills') and metadata.technical_skills:
         skills_list = []
@@ -108,24 +142,6 @@ def generate_latex(state: AgentState) -> AgentState:
         technical_skills_latex = "\\textbf{Languages}: Python, Java, C++ \\\\\n     \\textbf{Technologies}: React, Node.js, Docker"
     
     latex_code = latex_code.replace("{{TECHNICAL_SKILLS}}", technical_skills_latex)
-
-    # ==================== POSITIONS OF RESPONSIBILITY ====================
-    por_latex = ""
-    if metadata.positions_of_responsibility and len(metadata.positions_of_responsibility) > 0:
-        for por in metadata.positions_of_responsibility:
-            organization = escape_latex(por.get('organization', 'Organization'))
-            duration = escape_latex(por.get('duration', 'Date'))
-            role = escape_latex(por.get('role', 'Role'))
-            location = escape_latex(por.get('location', ''))
-            description = escape_latex(por.get('description', ''))
-            
-            por_latex += f"        \\resumeSubheading{{{organization}}}{{{duration}}}{{{role}}}{{{location}}}\\resumeItemListStart\n"
-            por_latex += f"            \\resumeItem{{{description}}}\n"
-            por_latex += "        \\resumeItemListEnd\n\n"
-    else:
-        por_latex = "        \\resumeSubheading{Organization Name}{2022 - 2024}{Your Role}{}\\resumeItemListStart\n            \\resumeItem{Description of your responsibilities}\n        \\resumeItemListEnd\n\n"
-    
-    latex_code = latex_code.replace("{{POSITIONS}}", por_latex)
     
     return {
         **state,
@@ -135,7 +151,7 @@ def generate_latex(state: AgentState) -> AgentState:
 
 
 def get_latex_template():
-    """Overleaf-compatible template - no double braces in static LaTeX"""
+    """Overleaf-compatible template with conditional sections (no placeholders when empty)"""
     return r"""%-------------------------
 % Resume in Latex
 %------------------------
@@ -230,21 +246,13 @@ def get_latex_template():
 \end{center}
 
 %-----------EXPERIENCE-----------
-\section{Experience}
-  \resumeSubHeadingListStart
-{{EXPERIENCE}}  \resumeSubHeadingListEnd
-\vspace{-16pt}
+{{EXPERIENCE_SECTION}}
 
 %-----------EDUCATION-----------
-\section{Education}
-  \resumeSubHeadingListStart
-{{EDUCATION}}  \resumeSubHeadingListEnd
+{{EDUCATION_SECTION}}
 
 %-----------PROJECTS-----------
-\section{Projects}
-    \resumeSubHeadingListStart
-{{PROJECTS}}    \resumeSubHeadingListEnd
-\vspace{-16pt}
+{{PROJECTS_SECTION}}
 
 %-----------TECHNICAL SKILLS-----------
 \section{Technical Skills}
@@ -256,9 +264,7 @@ def get_latex_template():
  \vspace{-16pt}
 
 %-----------INVOLVEMENT---------------
-\section{Position of Responsibility}
-    \resumeSubHeadingListStart
-{{POSITIONS}}    \resumeSubHeadingListEnd
+{{POSITIONS_SECTION}}
 
 \end{document}
 """

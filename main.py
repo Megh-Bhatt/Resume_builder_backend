@@ -23,6 +23,7 @@ from langchain_aws import ChatBedrockConverse
 from agentstate import AgentState, ResumeMetadata
 from latex_handler import generate_latex
 from online_compiler import compile_latex_online
+from fastapi.responses import StreamingResponse
 import logging
 
 load_dotenv()
@@ -166,7 +167,7 @@ def generate_projects(state: AgentState) -> AgentState:
     messages = [
         SystemMessage(content=(
             "You are an expert at creating compelling project descriptions for resumes. "
-            "Generate exactly 3 technical projects that align with the job description and "
+            "Generate exactly 3 technical projects(the title should be under 25 characters) that align with the job description and "
             "the candidate's existing experience level. "
             "Each project must have 2-3 achievement bullet points with specific metrics and numbers. "
             "Keep the technologies list to at most 3 items per project. "
@@ -389,7 +390,93 @@ async def generate_resume(
         logger.exception("Error in generate_resume")
         return JSONResponse({"success": False, "error": str(e)}, status_code=500)
 
+@app.post("/api/generate-resume-stream")
+async def generate_resume_stream_route(
+    resume_file: UploadFile = File(...),
+    job_description: str = Form(...)
+):
+    """Stream resume generation progress via Server-Sent Events."""
 
+    resume_text = ""
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+        content = await resume_file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    try:
+        with pdfplumber.open(tmp_path) as pdf:
+            for page in pdf.pages:
+                text = page.extract_text()
+                if text:
+                    resume_text += text + "\n"
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+    initial_state = {
+        "resume_text":        resume_text,
+        "job_description":    job_description,
+        "extracted_info":     None,
+        "generated_projects": None,
+        "generated_skills":   None,
+        "resume_metadata":    None,
+        "latex_code":         None,
+        "messages":           [],
+    }
+
+    NODE_LABELS = {
+        "extract_info":       "Reading your resume",
+        "generate_projects":  "Crafting tailored projects",
+        "generate_skills":    "Matching technical skills",
+        "create_metadata":    "Building resume structure",
+        "generate_latex":     "Rendering LaTeX document",
+    }
+
+    async def event_generator():
+        accumulated_state = dict(initial_state)
+        try:
+            async for event in graph.astream(initial_state, stream_mode="updates"):
+                for node_name, node_output in event.items():
+                    if node_output is None:
+                        continue
+                    accumulated_state.update(node_output)
+                    payload = json.dumps({"node": node_name, "label": NODE_LABELS.get(node_name, node_name)})
+                    yield f"event: node_complete\ndata: {payload}\n\n"
+
+            metadata_obj = accumulated_state.get("resume_metadata")
+            metadata_dict = metadata_obj.model_dump() if hasattr(metadata_obj, "model_dump") else metadata_obj
+
+            yield f"event: complete\ndata: {json.dumps({'metadata': metadata_dict, 'latex_code': accumulated_state.get('latex_code')})}\n\n"
+
+        except Exception as exc:
+            import traceback
+            yield f"event: error\ndata: {json.dumps({'error': str(exc), 'traceback': traceback.format_exc() if os.getenv('ENV') == 'development' else None})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control":     "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection":        "keep-alive",
+        },
+    )
+
+@app.post("/api/regenerate-latex")
+async def regenerate_latex(metadata: ResumeMetadata):
+    """Regenerate LaTeX from updated (edited) metadata - used when user deletes sections"""
+    try:
+        state = {"resume_metadata": metadata}
+        updated_state = generate_latex(state)
+        
+        return JSONResponse({
+            "success": True,
+            "latex_code": updated_state["latex_code"]
+        })
+    except Exception as e:
+        logger.exception("Error regenerating LaTeX")
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+    
 @app.post("/api/compile-latex")
 async def compile_latex(latex_code: str = Form(...)):
     """Compile LaTeX to PDF via online API (Vercel-compatible)."""
