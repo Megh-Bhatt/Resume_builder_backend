@@ -23,13 +23,13 @@ from pathlib import Path
 import tempfile
 import json
 from dotenv import load_dotenv
-from langchain_aws import ChatBedrockConverse
+# from langchain_aws import ChatBedrockConverse
 from agentstate import AgentState, ResumeMetadata
 from latex_handler import generate_latex
 from online_compiler import compile_latex_online
 from fastapi.responses import StreamingResponse
 import logging
-from langchain_anthropic import ChatAnthropic
+# from langchain_anthropic import ChatAnthropic
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 load_dotenv()
