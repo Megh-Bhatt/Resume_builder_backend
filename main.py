@@ -31,6 +31,7 @@ from fastapi.responses import StreamingResponse
 import logging
 # from langchain_anthropic import ChatAnthropic
 from langchain_google_genai import ChatGoogleGenerativeAI
+from mangum import Mangum
 
 load_dotenv()
 
@@ -593,7 +594,8 @@ async def health_check(request: Request):
     return {"status": "healthy", "compiler": "online", "vercel_compatible": True}
 
 
-handler = app  # Vercel entry point
+handler = Mangum(app)
+  # Vercel entry point
 
 if __name__ == "__main__":
     import uvicorn
