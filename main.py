@@ -594,7 +594,6 @@ async def health_check(request: Request):
     return {"status": "healthy", "compiler": "online", "vercel_compatible": True}
 
 
-handler = Mangum(app)
   # Vercel entry point
 
 if __name__ == "__main__":
